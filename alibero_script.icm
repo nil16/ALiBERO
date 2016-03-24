@@ -1,0 +1,339 @@
+#!/home/nilkanth/icm-3.8-4a/icm64 -s
+
+call _startup
+l_confirm=yes
+
+#
+#	Initializing some parameters and also 
+#       reading some others from input.in file
+#
+
+insa_1		=  0.
+iauc_1          =  0.
+iscore_1        =  0.
+maxnsa_1	=  95.
+maxauc_1        =  99.
+maxscore_1      =  -99.
+ncpu_1          =  1
+gen_1           =  1
+read sarray "input.in"
+a = Field(input_1  1 )
+b = Field(input_1  2 )
+for i = 1,Nof(a)
+        $a[i] = b[i]
+        print a[i] "\t" $a[i]
+endfor
+
+#
+#	Creating project directory
+#
+
+if (!Exist(projdir_1)) then
+        make directory projdir_1
+        print "Dir: " projdir_1 "created."
+else
+        rename system projdir_1 projdir_1+"_old_files_1"
+        make directory projdir_1
+endif
+
+
+#
+#	Setting some other internal parameters
+#
+
+
+best_child_1            =  inputob_1
+best_prev_child_1       =  inputob_1
+ref_tether_1            =  inputob_1
+execution_dir_1         =  projdir_1
+maxthreshold_1  = maxnsa_1
+initthreshold_1 = 0.
+threshold_1     = 0.
+prev_auc_1      = iauc_1
+prev_nsa_1      = insa_1
+prev_score      = iscore_1
+wait 1
+
+
+#
+#	Gathering required initial files
+#
+
+
+unix cp dock_script.icm $projdir_1
+w_dir = projdir_1+"/GEN_1"
+make directory w_dir
+make directory w_dir+"/RECEPTORS"
+make directory w_dir+"/LIGANDS"
+sys cp $best_child_1 $w_dir/RECEPTORS
+sys cp $inx_1 $w_dir/LIGANDS
+sys cp $sdf_1 $w_dir/LIGANDS
+set directory projdir_1
+read index inx_1 "n_lig_1"
+n_ligands_1 = Nof(n_lig_1)
+print "Process Starts .. .. .."
+
+
+#
+#	Main loop starts here
+#
+
+
+while (threshold_1 < maxthreshold_1)
+        set directory projdir_1
+        print "Current Gen. is = " gen_1
+        gen_dir = projdir_1+"/GEN_"+gen_1
+
+
+	# 	Copying files from the previous gen. or from input directory
+	
+        if (gen_1 > 1) then
+                make directory gen_dir
+                make directory gen_dir+"/RECEPTORS"
+                make directory gen_dir+"/LIGANDS"
+                sys cp $best_child_1 $gen_dir/RECEPTORS/
+		sys mv $gen_dir/RECEPTORS/*.ob Parent_$gen_1.ob
+                sys cp $inx_1 $gen_dir/LIGANDS/
+                sys cp $sdf_1 $gen_dir/LIGANDS/
+        endif
+	
+
+
+	# 	Making models using NMA and saving them
+
+        set directory gen_dir+"/RECEPTORS"
+        openFile best_child_1 0 no no no no "append"
+        mkNMstack a_ 31 0.1 1 no no no no # To generate 62 models
+        nonm_1 = Nof(a_ conf)
+        for i=1,nonm_1
+                load conf i
+		rename a_ "RECEPTOR_"+i
+                write object a_ "RECEPTOR_"+i
+        endfor
+
+#####################
+
+	#	Initiating docking map calculations and runs in parallel manner using a script "dock_script.icm"	
+        
+	Unix("$ICMHOME/icm64 ../../../dock_script.icm")
+		
+	print "Docking jobs are finished for this Generation !!!"
+        set directory gen_dir
+	ux rm -rf DOCK_0
+        write s_out "dock_log_file"
+	s_out = ""	
+
+	
+	#	Analyzing performance of each model using docking results and calculating NSA and other values
+	ux rm -r DOCK_0
+	N_best=1
+        read sys ls -1fd DOCK_{?,??,???}
+        Sdir = Split(s_out, "\n")
+        NN=Nof(Sdir)
+        sys cp $inx_1 .
+        sys cp $sdf_1 .
+        sys cp DOCK_1/1/TEST.dtb .
+        read index lig_file_name_1
+        read table index $lig_file_name_1
+        group table copy "T_Roc_Nsa" Count(1 NN) "No" Sdir "Rec_name" Rarray(NN) "Roc" Rarray(NN) "Nsa" Rarray(NN) "SCORE_AV" Rarray(NN) "EF5" Rarray(NN) "EF10"
+        fitness_function = "NSA"
+        if (fitness_function == "NSA" ) then
+                f_fit="Nsa"
+                print "using NSA as Fitness function"
+        elseif (fitness_function == "AUC" ) then
+                f_fit="Roc"
+                print "using AUC as Fitness function"
+        else
+                f_fit= "SCORE_AV"
+                print "using Score as Fitness function"
+        endif
+
+        N_keep=3
+
+        for i=1,Nof(Sdir)
+                set directory Sdir[i]
+                if Exist ("1/TEST_answers1.ob") then
+                        Sdir[i]
+                        scanMakeHitList "1/TEST" "?/TEST_answers1" "TEST_answers" no yes yes 0 
+                        if (Nof(TEST_answers)==n_ligands_1) then
+                                I_chem=(chem.IX==TEST_answers.IX).IX
+                                TEST_answers=TEST_answers[I_chem]
+                                add column TEST_answers chem.Active[I_chem] name="Active" index=2 append
+                                R_out={0.,0.,0.,0.,0.}
+                                
+
+				# 	Calculation of NSA and other values and also modifying errorAction to avoid termination
+				
+				errorAction = 1
+				
+				calcRoc TEST_answers.Score TEST_answers.Active yes
+                                T_Roc_Nsa.Roc[i]=R_out[1]
+                                calcNsa TEST_answers.Score TEST_answers.Active 0. no yes no
+                                T_Roc_Nsa.Nsa[i]=R_out[1]
+                                sort TEST_answers.Score
+                                N_score=Nof(TEST_answers.Active==1)/2
+                                print "Average score for top"+ N_score
+                                T_Roc_Nsa.SCORE_AV[i]=(-1.)*Mean((TEST_answers.Active==1).Score[1:N_score])
+                                add column  TEST_answers (TEST_answers.Active+1.)*2.  name="ActSize" append
+                                T_temp= T_Roc_Nsa
+                                sort T_temp.$f_fit reverse
+
+				errorAction = 2
+				
+
+				#	Saving only limited numbers of tables
+
+				if ( $i > $N_keep ) then
+	                                if (T_Roc_Nsa.$f_fit[i]> T_temp.$f_fit[N_keep]) then    
+        	                                delete T_answ_$T_temp.No[N_keep]        
+                	                        delete troc_$T_temp.No[N_keep]  
+                        	                rename TEST_answers "T_answ_"+i
+                                	        rename troc "troc_"+i
+						rename tnsa "tnsa_"+i
+	                                endif   # error
+				endif   # error
+			endif
+              endif     # error
+              cd ..
+        endfor  # error
+        sort T_Roc_Nsa.$f_fit reverse
+
+	
+	#	Saving best values and references to internal parameters
+
+        for i=1, N_best
+                print "T_Roc_Nsa_Rec_Name_Marker"
+                T_Roc_Nsa.Rec_name[i]
+                best_rec_1 = T_Roc_Nsa.Rec_name[i]
+                print "T_Roc_Nsa_Auc_Marker"
+                T_Roc_Nsa.Roc[i]
+                best_auc_1 = T_Roc_Nsa.Roc[i]
+                print "T_Roc_Nsa_Nsa_Marker"
+                T_Roc_Nsa.Nsa[i]
+                best_nsa_1 = T_Roc_Nsa.Nsa[i]
+                print "T_Roc_Nsa_SCORE_AV_Marker"
+                T_Roc_Nsa.SCORE_AV[1]
+                best_score_1 = T_Roc_Nsa.SCORE_AV[1]
+                read object T_Roc_Nsa.Rec_name[i]+"/1/TEST_rec.ob"
+                rename a_ Replace(T_Roc_Nsa.Rec_name[i] "DOCK_" "")
+                write object
+        endfor
+
+	
+	#	Writing results in a project for this generation
+	
+        ux mkdir 1
+        ss=T_Roc_Nsa.Rec_name[1]+"/1/TEST_rec.ob"
+        ux cp $ss "1/TEST_rec.ob"
+        ux cp DOCK_1/1/TEST.dtb 1
+	writeProject "Gen_"+$gen_1 yes
+	
+	
+	#	comparing and Saving results and also checking if made improvement
+		
+	best_prev_child_1	= best_child_1
+	best_child_1		= Path()+ss
+	new_threshold_1		= best_nsa_1
+	
+	uphill_1		= $new_threshold_1 - $threshold_1
+
+	if (uphill_1 < 0) then
+		
+		best_child_1	= best_prev_child_1
+		best_auc_1	= $prev_auc_1
+		best_nsa_1	= $prev_nsa_1
+		best_score_1	= $prev_score_1
+
+	endif
+
+	
+#
+#	Refinement
+#
+
+
+	N_top = 3	# No. of top scored Active ligands to be used for MC refinement 
+
+	
+	# Going to the best child folder and making hitlist for top actives
+	
+	set directory best_rec_1
+	
+	sn = best_rec_1 + "_refined"
+	
+	sys cp 1/TEST.dtb .				
+	sys cp 1/TEST_rec.ob .
+	
+	read index "1/"+lig_file_name_1
+        read table index $lig_file_name_1
+
+	scanMakeHitList "1/TEST" "*/TEST_answers1" "T" no yes yes 0 	
+
+		
+	T= (T.IX == Iarray((chem.Active==1).IX))  ## keep only actives
+	sort T.Score
+
+	r_ener = 999.   #SK
+
+	for i=1, N_top
+				
+		scanDsHit "TEST" "T" i yes & yes ! yes
+		
+		# any restraints for refinement
+		# Anchor residue - select manually, need  protein 
+		unds window	
+		set terms "vw,14,hb,el,to,ss,cn"
+		cnWeight=10.
+
+		
+		# 	MC refinement - Change Anchor residue based on the receptor 
+
+		set drestraint type 1 10. 2.3 3.0
+		sel_dres= Sphere(a_/128/od1 a_m//M40 30.) #MMFF type 40 for exocyclic N
+		if (Nof(sel_dres)>0)  set drestraint all (a_/128/od1) sel_dres[1] 1
+		unds window
+		minimize v_m
+		vsel_min= v_m | (v_//x* & Res(Sphere(a_m a_A 12.))) 
+		vsel_mc= v_m | (v_//x* & Res(Sphere(a_m a_A 4.)))
+		unds window
+		montecarlo vsel_mc vsel_min mncallsMC=10000 temperature=900
+		errorAction = 1
+		load conf 1
+
+		show energy v_m
+		Energy("func" )
+		if (Energy("func" ) < -10. & Energy("func" ) < r_ener  ) then 
+			r_ener = Energy("func" )                              
+			delete a_m  
+			delete stack a_.					
+			rename a_ sn                                       
+			write object a_ 	
+		endif
+		delete a_*.
+	endfor
+		errorAction = 2
+	best_child_1 = Path() + sn + ".ob"
+	cd ..
+
+
+
+##################################################################################################################
+
+
+	#	Adjust internal parameters if everything goes with improvement
+
+
+	print "Round "+$gen_1+" finishes here."
+	
+	threshold_1	= best_nsa_1
+	prev_nsa_1 	= best_nsa_1
+	prev_auc_1	= best_auc_1
+	prev_score_1	= best_score_1
+	prev_rmsd_1	= rmsd_1
+	best_prev_child_1 = best_child_1
+	
+	gen_1 = gen_1 + 1
+	delete table
+	delete object
+
+endwhile
