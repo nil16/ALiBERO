@@ -1,0 +1,49 @@
+#!$ICMHOME/icm64 -s
+
+call _startup
+l_confirm=yes
+
+read sys ls -v RECEPTOR_*
+Rdir = Split(s_out, "\n")
+np_1 = Nof(Rdir)
+set directory ".."
+gen_dir = Path()
+read sys ls $gen_dir/LIGANDS/*inx
+inx_1 = (Split(s_out, "\n"))[1]
+
+fork $np_1 
+
+ip = Index(fork)
+dock_dir_1 = gen_dir + "/DOCK_" + ip
+
+make directory dock_dir_1
+print "Calculating maps for :\t"  dock_dir_1
+repeat_dir_1 = dock_dir_1+"/1"
+make directory repeat_dir_1
+set directory repeat_dir_1
+sys cp ../../../../INPUT/LIGANDS/* .
+sys cp $gen_dir/RECEPTORS/RECEPTOR_$ip.ob .
+delete a_.
+read object "RECEPTOR_"+$ip+".ob"
+rename a_ "RECEPTOR_"+$ip
+
+asel=a_/105,125,128:132,190,200,213:218,274,277:278,281:282,284:285,300,303:305,307:308
+dock2SetupReceptor "TEST" a_1. asel no "none"
+s_out = currentDockProj.data[1] + "_rec"
+set object a_$s_out.
+currentDockProj.l_readyMaps=no
+dock5CalcMaps currentDockProj.data[1] 0.5 1.0 no
+currentDockProj.data[8] = "yes"
+currentDockProj.data[2:9] = { "dock3DbScanSetup" "yes" "yes" "file" "mol" "auto" "yes" "yes"}
+currentDockProj.data[5] = inx_1
+dock3DbScanSetup currentDockProj.data[1] no yes "default"
+delete a_.
+
+
+set directory dock_dir_1+"/1"
+unix $ICMHOME/icm64 $ICMHOME/_dockScan ./TEST effort=1. name=answers -a TEST > TEST_all.ou
+print "Runnig VLS job for: "+dock_dir_1
+
+wait
+print " back to parent"
+quit
